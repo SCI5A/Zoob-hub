@@ -111,3 +111,5 @@ temp/
 
 # Firebase Secrets
 firebase-adminsdk.json
+.firebaserc
+.firebase/

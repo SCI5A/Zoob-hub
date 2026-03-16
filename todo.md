@@ -8,9 +8,9 @@
 
 ## Backend Setup
 - [x] إنشاء ملف تكوين Firebase في الخادم
-- [ ] إعداد endpoints للمصادقة (تسجيل/دخول/خروج)
-- [ ] إعداد endpoints لعمليات CRUD مع Firestore
-- [ ] إضافة middleware للتحقق من المصادقة
+- [x] إعداد endpoints للمصادقة (تسجيل/دخول/خروج)
+- [x] إعداد endpoints لعمليات CRUD مع Firestore
+- [x] إضافة middleware للتحقق من المصادقة
 
 ## Frontend - Authentication
 - [x] إنشاء مكون تسجيل الدخول
@@ -31,4 +31,22 @@
 - [x] اختبار عمليات CRUD
 - [x] اختبار الاتصال بـ Firebase
 - [x] تشغيل المشروع بالكامل
-- [ ] إنشاء checkpoint نهائي
+- [x] إنشاء checkpoint نهائي
+
+## Firebase Configuration Files
+- [x] إنشاء firebase.json
+- [x] إنشاء .firebaserc
+- [x] إنشاء firestore.rules
+- [x] إنشاء firestore.indexes.json
+
+## Documentation
+- [x] إنشاء README.md شامل
+- [x] إنشاء .env.example
+- [x] توثيق API endpoints
+- [x] توثيق هيكل المشروع
+
+## Final Steps
+- [ ] اختبار جميع الـ endpoints
+- [ ] التحقق من الأمان
+- [ ] رفع المشروع على GitHub
+- [ ] نشر على Firebase Hosting

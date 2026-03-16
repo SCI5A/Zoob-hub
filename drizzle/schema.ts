@@ -25,4 +25,19 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// Data items table for storing user data
+export const dataItems = mysqlTable("dataItems", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  content: text("content"),
+  status: mysqlEnum("status", ["active", "archived", "deleted"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataItem = typeof dataItems.$inferSelect;
+export type InsertDataItem = typeof dataItems.$inferInsert;
+
 // TODO: Add your tables here
