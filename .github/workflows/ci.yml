@@ -1,31 +1,166 @@
-name: CI
+name: CI Quality Gate
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  quality-gate:
+    name: Quality Gate
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.4.1
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'pnpm'
+          node-version: "22.x"
+          cache: pnpm
+
+      - name: Verify toolchain
+        run: |
+          node --version
+          pnpm --version
+          test "$(pnpm --version)" = "10.4.1"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests
         run: pnpm test
+
+      - name: Run typecheck
+        run: pnpm check
+
+      - name: Prettier check on changed files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_ref="origin/${GITHUB_BASE_REF}"
+            head_ref="${GITHUB_SHA}"
+          else
+            base_ref="${{ github.event.before }}"
+            head_ref="${GITHUB_SHA}"
+            if [[ "${base_ref}" == "0000000000000000000000000000000000000000" ]]; then
+              base_ref="$(git rev-list --max-parents=0 HEAD)"
+            fi
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only --diff-filter=ACMR "${base_ref}" "${head_ref}" -- \
+            '*.js' '*.jsx' '*.ts' '*.tsx' '*.json' '*.css' '*.md' '*.yaml' '*.yml' '*.html')
+
+          if (( ${#changed_files[@]} == 0 )); then
+            echo 'No supported changed files require Prettier validation.'
+            exit 0
+          fi
+
+          printf '%s\n' "${changed_files[@]}"
+          pnpm exec prettier --check "${changed_files[@]}"
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Validate production artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          test -s dist/public/index.html
+          test -s dist/index.js
+          find dist/public -type f | sort > ci-artifacts/dist-public-files.txt
+          {
+            echo 'dist/public/index.html: present and non-empty'
+            echo 'dist/index.js: present and non-empty'
+            echo "dist/public file count: $(wc -l < ci-artifacts/dist-public-files.txt)"
+          } | tee ci-artifacts/build-validation.txt
+
+      - name: Run dependency audit and evaluate baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          set +e
+          pnpm audit --prod --json > ci-artifacts/audit.json 2> ci-artifacts/audit.stderr
+          audit_exit=$?
+          set -e
+          cat ci-artifacts/audit.json
+          AUDIT_EXIT_CODE="${audit_exit}" node <<'NODE'
+          const fs = require('fs');
+          const audit = JSON.parse(fs.readFileSync('ci-artifacts/audit.json', 'utf8'));
+          const baseline = JSON.parse(fs.readFileSync('security/audit-baseline.json', 'utf8'));
+          const today = new Date().toISOString().slice(0, 10);
+          const entries = Array.isArray(baseline.entries) ? baseline.entries : [];
+          const advisories = Object.values(audit.advisories || {});
+          const counts = audit.metadata?.vulnerabilities || {};
+          const result = {
+            evaluatedAt: today,
+            auditExitCode: Number(process.env.AUDIT_EXIT_CODE || 0),
+            counts,
+            allowedTemporary: [],
+            blocking: [],
+            reported: []
+          };
+
+          if (!baseline.expiryDate || today > baseline.expiryDate) {
+            result.blocking.push({ reason: 'Security baseline expired', expiryDate: baseline.expiryDate });
+          }
+
+          for (const advisory of advisories) {
+            const severity = String(advisory.severity || '').toLowerCase();
+            const match = entries.find((entry) =>
+              entry.package === advisory.module_name &&
+              entry.advisory === advisory.title &&
+              entry.severity === severity &&
+              entry.exposureClassification === 'Not Observed in Reviewed Application Path' &&
+              entry.expiryDate && today <= entry.expiryDate
+            );
+
+            if (severity === 'critical') {
+              result.blocking.push({ package: advisory.module_name, advisory: advisory.title, reason: 'Critical advisory' });
+            } else if (severity === 'high') {
+              if (match) {
+                result.allowedTemporary.push({ package: advisory.module_name, advisory: advisory.title, expiryDate: match.expiryDate });
+              } else {
+                result.blocking.push({ package: advisory.module_name, advisory: advisory.title, reason: 'New, expired, or non-baselined High advisory' });
+              }
+            } else if (severity === 'moderate' || severity === 'low') {
+              result.reported.push({ package: advisory.module_name, advisory: advisory.title, severity });
+            }
+          }
+
+          fs.writeFileSync('ci-artifacts/security-baseline-evaluation.json', JSON.stringify(result, null, 2) + '\n');
+          console.log(JSON.stringify(result, null, 2));
+          if (result.blocking.length > 0) process.exit(1);
+          NODE
+      - name: Upload diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoob-hub-quality-gate-${{ github.sha }}
+          path: |
+            ci-artifacts/audit.json
+            ci-artifacts/audit.stderr
+            ci-artifacts/security-baseline-evaluation.json
+            ci-artifacts/build-validation.txt
+            ci-artifacts/dist-public-files.txt
+          if-no-files-found: warn
+          retention-days: 14
